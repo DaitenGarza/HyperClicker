@@ -1,8 +1,11 @@
 """
-HyperClicker v1.0 - Rapid-Fire Macro Tool
+HyperClicker v1.1 - Rapid-Fire Macro Tool
 ==========================================
 Hold any bound key or mouse button and it fires at ultra-high speed
 instead of registering as a normal hold.
+
+v1.1 - Uses raw Win32 SendInput with hardware scan codes so input
+       is recognized by games and applications (not just browsers).
 
 Setup:  pip install pynput
 Run:    python hyperclicker.py
@@ -16,21 +19,22 @@ import json
 import os
 import sys
 import atexit
+import ctypes
+import ctypes.wintypes as wt
 
 # ── Dependency check ──────────────────────────────────────────────
 try:
     from pynput import keyboard, mouse
-    from pynput.keyboard import Key, KeyCode, Controller as KBCtrl
-    from pynput.mouse import Button, Controller as MouseCtrl
+    from pynput.keyboard import Key, KeyCode
+    from pynput.mouse import Button
 except ImportError:
     _r = tk.Tk(); _r.withdraw()
     messagebox.showerror("Missing Dependency",
                          "pynput is required.\n\nRun:  pip install pynput")
     sys.exit(1)
 
-# ── Windows timer precision (optional) ───────────────────────────
+# ── Windows timer precision ──────────────────────────────────────
 try:
-    import ctypes
     ctypes.windll.winmm.timeBeginPeriod(1)
     atexit.register(ctypes.windll.winmm.timeEndPeriod, 1)
 except Exception:
@@ -40,7 +44,158 @@ except Exception:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
 
-# ── Colors (Catppuccin Mocha) ────────────────────────────────────
+
+# ═════════════════════════════════════════════════════════════════
+#  WIN32 SENDINPUT  (raw hardware-level simulation)
+#  This is what makes input work in games / real applications.
+#  pynput's Controller sends high-level messages that apps ignore.
+#  SendInput with scan codes looks like real keyboard hardware.
+# ═════════════════════════════════════════════════════════════════
+
+INPUT_KEYBOARD = 1
+INPUT_MOUSE    = 0
+
+KEYEVENTF_KEYUP       = 0x0002
+KEYEVENTF_SCANCODE    = 0x0008
+KEYEVENTF_EXTENDEDKEY = 0x0001
+
+MOUSEEVENTF_LEFTDOWN   = 0x0002
+MOUSEEVENTF_LEFTUP     = 0x0004
+MOUSEEVENTF_RIGHTDOWN  = 0x0008
+MOUSEEVENTF_RIGHTUP    = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP   = 0x0040
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk",         wt.WORD),
+        ("wScan",       wt.WORD),
+        ("dwFlags",     wt.DWORD),
+        ("time",        wt.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx",          wt.LONG),
+        ("dy",          wt.LONG),
+        ("mouseData",   wt.DWORD),
+        ("dwFlags",     wt.DWORD),
+        ("time",        wt.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg",    wt.DWORD),
+        ("wParamL", wt.WORD),
+        ("wParamH", wt.WORD),
+    ]
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", wt.DWORD), ("union", _INPUT_UNION)]
+
+
+user32 = ctypes.windll.user32
+user32.SendInput.argtypes  = [wt.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+user32.SendInput.restype   = wt.UINT
+user32.MapVirtualKeyW.argtypes = [wt.UINT, wt.UINT]
+user32.MapVirtualKeyW.restype  = wt.UINT
+
+# Keys that need the EXTENDED flag (arrows, nav, etc.)
+EXTENDED_VKS = {
+    0x21, 0x22, 0x23, 0x24,        # PgUp PgDn End Home
+    0x25, 0x26, 0x27, 0x28,        # Arrow keys
+    0x2D, 0x2E,                    # Insert Delete
+    0x5B, 0x5C, 0x5D,              # Win keys, Menu
+    0x6F,                          # Numpad /
+    0x90, 0x91,                    # NumLock ScrollLock
+    0x2C,                          # PrintScreen
+}
+
+# pynput Key name  →  Windows Virtual-Key code
+KEY_NAME_TO_VK = {
+    "shift": 0xA0, "shift_l": 0xA0, "shift_r": 0xA1,
+    "ctrl":  0xA2, "ctrl_l":  0xA2, "ctrl_r":  0xA3,
+    "alt":   0xA4, "alt_l":   0xA4, "alt_r":   0xA5, "alt_gr": 0xA5,
+    "space": 0x20, "tab": 0x09, "enter": 0x0D,
+    "backspace": 0x08, "delete": 0x2E,
+    "esc": 0x1B, "caps_lock": 0x14,
+    "home": 0x24, "end": 0x23,
+    "page_up": 0x21, "page_down": 0x22,
+    "insert": 0x2D,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73,
+    "f5": 0x74, "f6": 0x75, "f7": 0x76, "f8": 0x77,
+    "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+    "f13": 0x7C, "f14": 0x7D, "f15": 0x7E, "f16": 0x7F,
+    "num_lock": 0x90, "scroll_lock": 0x91,
+    "print_screen": 0x2C, "pause": 0x13,
+    "cmd": 0x5B, "cmd_l": 0x5B, "cmd_r": 0x5C,
+    "menu": 0x5D,
+}
+
+MOUSE_FLAGS = {
+    "left":   (MOUSEEVENTF_LEFTDOWN,   MOUSEEVENTF_LEFTUP),
+    "right":  (MOUSEEVENTF_RIGHTDOWN,  MOUSEEVENTF_RIGHTUP),
+    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+}
+
+
+def id_to_vk(key_id):
+    """Convert a key ID string to a Windows VK code."""
+    if key_id.startswith("Key."):
+        return KEY_NAME_TO_VK.get(key_id[4:])
+    if key_id.startswith("vk_"):
+        return int(key_id[3:])
+    if key_id.startswith("char_"):
+        ch = key_id[5:]
+        # VkKeyScanW returns VK in the low byte
+        result = user32.VkKeyScanW(ord(ch))
+        if result != -1:
+            return result & 0xFF
+    return None
+
+
+def send_key_event(vk, down=True):
+    """Send a keyboard event via SendInput with hardware scan codes."""
+    scan = user32.MapVirtualKeyW(vk, 0)   # MAPVK_VK_TO_VSC
+
+    inp = INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.union.ki.wVk   = vk               # VK  for high-level apps
+    inp.union.ki.wScan = scan              # scan code for DirectInput / games
+    inp.union.ki.dwFlags = 0 if down else KEYEVENTF_KEYUP
+    if vk in EXTENDED_VKS:
+        inp.union.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY
+    inp.union.ki.time = 0
+    inp.union.ki.dwExtraInfo = ctypes.c_void_p(0)
+
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+
+def send_mouse_event(button_name, down=True):
+    """Send a mouse button event via SendInput."""
+    flags = MOUSE_FLAGS.get(button_name)
+    if not flags:
+        return
+
+    inp = INPUT()
+    inp.type = INPUT_MOUSE
+    inp.union.mi.dwFlags = flags[0] if down else flags[1]
+    inp.union.mi.time = 0
+    inp.union.mi.dwExtraInfo = ctypes.c_void_p(0)
+
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+
+# ═════════════════════════════════════════════════════════════════
+#  COLORS  (Catppuccin Mocha)
+# ═════════════════════════════════════════════════════════════════
 BG       = "#1e1e2e"
 BG_CARD  = "#313244"
 BG_BTN   = "#45475a"
@@ -51,7 +206,11 @@ GREEN    = "#a6e3a1"
 RED      = "#f38ba8"
 YELLOW   = "#f9e2af"
 
-# ── Key name mappings ────────────────────────────────────────────
+
+# ═════════════════════════════════════════════════════════════════
+#  KEY DISPLAY NAMES & UTILITIES
+# ═════════════════════════════════════════════════════════════════
+
 SPECIAL_KEY_NAMES = {
     Key.shift: "Left Shift", Key.shift_l: "Left Shift", Key.shift_r: "Right Shift",
     Key.ctrl_l: "Left Ctrl", Key.ctrl_r: "Right Ctrl",
@@ -79,8 +238,6 @@ MOUSE_DISPLAY = {
     "Button.middle": "Middle Click",
 }
 
-
-# ── Key utilities ────────────────────────────────────────────────
 
 def key_to_id(key):
     """Stable string ID for any pynput key."""
@@ -132,25 +289,6 @@ def id_to_display(key_id):
     return key_id
 
 
-def id_to_key(key_id):
-    """Reconstruct a pynput key object from its string ID."""
-    if key_id.startswith("Key."):
-        try:
-            return Key[key_id[4:]]
-        except KeyError:
-            return None
-    if key_id.startswith("char_"):
-        return KeyCode(char=key_id[5:])
-    if key_id.startswith("vk_"):
-        return KeyCode(vk=int(key_id[3:]))
-    if key_id.startswith("Button."):
-        try:
-            return Button[key_id[7:]]
-        except KeyError:
-            return None
-    return None
-
-
 # ── Precision timer ──────────────────────────────────────────────
 
 def precise_sleep(seconds):
@@ -170,7 +308,12 @@ def precise_sleep(seconds):
 # ═════════════════════════════════════════════════════════════════
 
 class MacroEngine:
-    """Core engine: listens for input, manages rapid-fire threads."""
+    """
+    Core engine.
+
+    LISTENING  — pynput hooks (detects real user keypresses)
+    SIMULATING — raw Win32 SendInput with scan codes (games see it)
+    """
 
     def __init__(self):
         # Public state
@@ -184,20 +327,16 @@ class MacroEngine:
         self._firing = {}            # {key_id: Thread}
         self._stop_events = {}       # {key_id: Event}
 
-        # Counters to ignore our own simulated events
+        # Counters to ignore our own simulated events in the listener
         self._sim_press = {}
         self._sim_release = {}
         self._lock = threading.Lock()
 
-        # Simulation controllers
-        self._kb = KBCtrl()
-        self._mouse = MouseCtrl()
-
-        # Listeners
+        # pynput listeners (for DETECTION only, not simulation)
         self._kb_listener = None
         self._mouse_listener = None
 
-        # Key capture
+        # Key capture mode (for UI dialogs)
         self._capture_mode = False
         self._captured = None
         self._capture_event = threading.Event()
@@ -352,30 +491,40 @@ class MacroEngine:
         self._held.clear()
 
     def _fire_loop(self, key_id, stop_event):
-        key_obj = id_to_key(key_id)
-        if key_obj is None:
-            return
-
+        """
+        Rapid-fire loop using raw Win32 SendInput.
+        Sends both VK code + hardware scan code so the input
+        is recognized by regular apps AND DirectInput games.
+        """
         is_mouse = key_id.startswith("Button.")
+
+        if is_mouse:
+            button_name = key_id[7:]   # "left" / "right" / "middle"
+            if button_name not in MOUSE_FLAGS:
+                return
+        else:
+            vk = id_to_vk(key_id)
+            if vk is None:
+                return
 
         while not stop_event.is_set() and self.active:
             interval = 1.0 / max(self.cps, 1)
             half = interval / 2
 
-            # Tell listener to ignore the next simulated press + release
+            # Tell pynput listener to skip the next simulated press + release
             with self._lock:
-                self._sim_press[key_id] = self._sim_press.get(key_id, 0) + 1
+                self._sim_press[key_id]   = self._sim_press.get(key_id, 0) + 1
                 self._sim_release[key_id] = self._sim_release.get(key_id, 0) + 1
 
             try:
                 if is_mouse:
-                    self._mouse.press(key_obj)
+                    send_mouse_event(button_name, down=True)
                     precise_sleep(half)
-                    self._mouse.release(key_obj)
+                    send_mouse_event(button_name, down=False)
                 else:
-                    self._kb.press(key_obj)
+                    send_key_event(vk, down=True)
                     precise_sleep(half)
-                    self._kb.release(key_obj)
+                    send_key_event(vk, down=False)
             except Exception:
                 break
 
@@ -412,11 +561,10 @@ class HyperClickerApp:
 
     def _apply_dark_titlebar(self):
         try:
-            import ctypes as ct
             self.root.update()
-            hwnd = ct.windll.user32.GetParent(self.root.winfo_id())
-            ct.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 20, ct.byref(ct.c_int(2)), ct.sizeof(ct.c_int))
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(ctypes.c_int(2)), ctypes.sizeof(ctypes.c_int))
         except Exception:
             pass
 
