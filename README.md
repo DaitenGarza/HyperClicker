@@ -53,30 +53,28 @@ Unlike basic auto-clickers that only spam left click, HyperClicker works with **
 
 ---
 
-## Installation
+## Download
 
-### Prerequisites
+### Option 1: Just Run It (no Python needed)
 
-- **Python 3.8+** — [Download Python](https://www.python.org/downloads/)
-- **Windows 10/11**
+1. Go to the [**Releases**](https://github.com/DaitenGarza/HyperClicker/releases) page
+2. Download **HyperClicker.exe**
+3. Double-click to run
 
-### Steps
+No install. No Python. No terminal. Just works.
 
-1. **Clone the repo**
-   ```bash
-   git clone https://github.com/DaitenGarza/HyperClicker.git
-   cd HyperClicker
-   ```
+> Windows Defender may flag it since it's unsigned — click **"More info" > "Run anyway"**.
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Option 2: Run From Source
 
-3. **Run**
-   ```bash
-   python hyperclicker.py
-   ```
+If you have Python installed and want to modify the code:
+
+```bash
+git clone https://github.com/DaitenGarza/HyperClicker.git
+cd HyperClicker
+pip install -r requirements.txt
+python hyperclicker.py
+```
 
 ---
 
